@@ -1,1 +1,2 @@
 
+class stack(ass)

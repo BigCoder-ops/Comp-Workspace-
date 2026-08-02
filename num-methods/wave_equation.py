@@ -15,47 +15,67 @@ def solve_wave(N, M, L=1.0, T_end=2.0, c=1.0, is_q3=True):
     If is_q3=True, it uses the specific forcing function f(x,t) from Question 3.
     If is_q3=False, it simulates a standard unforced string (f=0) for Question 5.
     """
+    # --- PHASE 1: DISCRETIZATION ---
+    # Define spatial step (dx) and temporal step (dt) to map the continuous domain onto a grid
     dx = L / N
     dt = T_end / M
+    # Compute the Courant number squared; this parameter determines how the string's
+    # points interact and ensures stability in our Implicit Scheme
     r = (c * dt / dx) ** 2
 
+    # Create coordinate arrays representing our spatial grid (x) and time levels (t)
     x = np.linspace(0, L, N + 1)
     t = np.linspace(0, T_end, M + 1)
 
-    # Initialize displacement matrix U (rows=space, cols=time)
+    # Allocate a 2D matrix 'U' to store the entire history of the string's displacement
+    # (Rows = spatial points, Columns = time steps)
     U = np.zeros((N + 1, M + 1))
 
-    # Forcing function definition
+    # --- PHASE 2: INITIALIZATION ---
     def f(x_val, t_val):
+        # Applies external force; active for Q3 (forced oscillation) and zero for Q5 (free vibration)
         if is_q3:
             return -3 * np.pi ** 2 * np.sin(np.pi * x_val) * np.cos(2 * np.pi * t_val)
         return np.zeros_like(x_val)
 
-    # Initial Conditions setup
+    # Set initial displacement (t=0) as a sine wave shape
     U[:, 0] = np.sin(np.pi * x)
-    U[:, 1] = np.copy(U[:, 0])  # Initial velocity u_t(x,0) = 0
+    # Set the state at the next time step (t=dt) equal to t=0, which mathematically
+    # enforces an initial velocity of zero (the string starts from rest)
+    U[:, 1] = np.copy(U[:, 0])
 
-    # Tridiagonal Matrix Formulation (Question 2)
+    # --- PHASE 3: MATRIX SETUP (The "Teamwork" Rule) ---
+    # Construct the tridiagonal matrix 'A' that couples each point to its neighbors
+    # Main diagonal stores the point itself; off-diagonals store the coupling to left/right neighbors
     main_diag = (1 + 2 * r) * np.ones(N - 1)
     off_diag = -r * np.ones(N - 2)
     A = np.diag(main_diag) + np.diag(off_diag, k=1) + np.diag(off_diag, k=-1)
 
-    # Pre-compute LU Decomposition for massive simulation speedup
+    # PRE-COMPUTE: Perform LU factorization once to save massive computation time inside the loop
+    # This turns a slow O(N^3) matrix-solve into a fast O(N^2) triangular-solve
+    #scipy use Partial Pivoting to swap row using a permutation matrice
     P, L_mat, U_mat = la.lu(A)
 
-    # Time-stepping loop
+    # --- PHASE 4: THE TIME-STEPPING HEARTBEAT ---
+    # Iterate through each time step (from the past to the future)
     for n in range(1, M):
+        # Extract interior spatial points (we ignore the boundaries 0 and N which stay at 0 => Dirichlet conditions)
         U_current = U[1:N, n]
         U_prev = U[1:N, n - 1]
         F_n = f(x[1:N], t[n])
 
-        # Right hand side of the equation
+        # Assembled RHS vector 'b': This combines the history (current & prev) and the force (F_n)
+        # to calculate what the forces acting on the string dictate for the NEXT time level
         b = 2 * U_current - U_prev + (dt ** 2) * F_n
 
-        # Solve AU_next = b using LU decomposition
+        # SOLVE: Use the pre-computed LU matrices to solve the linear system for the future state
+        # Forward substitution (L) followed by Backward substitution (U)
+        #P is the permutation matrix, L_mat is the lower triangular matrix, U_mat is the upper triangular matrix
+        #
         y = la.solve_triangular(L_mat, np.dot(P.T, b), lower=True)
         U[1:N, n + 1] = la.solve_triangular(U_mat, y, lower=False)
 
+    # Return the entire history matrix for analysis, visualization, and energy calculation
     return x, t, U, dx, dt
 
 
@@ -67,7 +87,7 @@ def compute_energy(U, dx, dt, c):
     Approximates numerical derivatives (u_t, u_x) and uses
     the Composite Simpson's Rule to calculate total mechanical energy over time.
     """
-    # Calculate numerical derivatives using central differences
+    # Calculate numerical derivatives using central differences 0(deltaxsquare) complexity
     u_x = np.gradient(U, dx, axis=0)
     u_t = np.gradient(U, dt, axis=1)
 
